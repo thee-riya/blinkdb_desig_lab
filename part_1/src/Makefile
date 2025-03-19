@@ -6,7 +6,7 @@ CXXFLAGS := -std=c++11 -pthread -Wall -O2
 TARGET := blinkdb
 
 # Source file(s)
-SRC := part_A.cpp
+SRC := part1.cpp
 
 # Default target: build the executable
 all: $(TARGET)
@@ -16,7 +16,7 @@ $(TARGET): $(SRC)
 
 # Run the program with the "part1" argument
 run: $(TARGET)
-	./$(TARGET) part_A
+	./$(TARGET) part1
 
 # Clean up build artifacts
 clean:
