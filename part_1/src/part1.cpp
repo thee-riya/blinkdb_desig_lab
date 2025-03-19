@@ -8,18 +8,32 @@
 #include <mutex>
 using namespace std;
 
+/**
+ * @class BlinkDB
+ * @brief A simple implementation of a key-value store with LRU eviction and persistent storage.
+ *
+ * This class mimics a key-value store with an in-memory cache and persistence to disk. It
+ * supports basic operations such as setting, getting, and deleting key-value pairs, as well as
+ * evicting the least recently used items when the capacity is exceeded. It logs all operations
+ * to a log file and restores from disk when necessary.
+ */
 class BlinkDB
 {
 private:
-    unordered_map<string, string> data;                    // In-memory key-value store
-    list<string> lru_list;                                 // LRU list to track usage
-    unordered_map<string, list<string>::iterator> lru_map; // Map keys to LRU list iterators
-    size_t capacity;                                       // Maximum number of key-value pairs in memory
-    string disk_file;                                      // File to store flushed data
-    string log_file;                                       // File to store all operations
-    std::recursive_mutex mtx;                              // Mutex to protect shared resources
+    unordered_map<string, string> data;                    ///< In-memory key-value store
+    list<string> lru_list;                                 ///< LRU list to track usage
+    unordered_map<string, list<string>::iterator> lru_map; ///< Map keys to LRU list iterators
+    size_t capacity;                                       ///< Maximum number of key-value pairs in memory
+    string disk_file;                                      ///< File to store flushed data
+    string log_file;                                       ///< File to store all operations
+    std::recursive_mutex mtx;                              ///< Mutex to protect shared resources
 
-    // Evict the least recently used key if capacity is reached
+    /**
+     * @brief Evict the least recently used key if capacity is reached.
+     *
+     * This function removes the least recently used key-value pair from memory and writes it
+     * to disk if necessary.
+     */
     void evict()
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -39,7 +53,13 @@ private:
         }
     }
 
-    // Update the LRU list for a key
+    /**
+     * @brief Update the LRU list for a key.
+     *
+     * This function moves the specified key to the front of the LRU list to mark it as recently used.
+     *
+     * @param key The key to update in the LRU list.
+     */
     void update_lru(const string &key)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -51,7 +71,14 @@ private:
         lru_map[key] = lru_list.begin();
     }
 
-    // Flush a key-value pair to disk
+    /**
+     * @brief Flush a key-value pair to disk.
+     *
+     * This function appends the given key-value pair to the disk file.
+     *
+     * @param key The key to flush to disk.
+     * @param value The value to flush to disk.
+     */
     void flush_to_disk(const string &key, const string &value)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -66,7 +93,13 @@ private:
         log_operation("Flushed to disk: " + key + " -> " + value);
     }
 
-    // Log an operation to the log file
+    /**
+     * @brief Log an operation to the log file.
+     *
+     * This function appends the given operation description to the log file.
+     *
+     * @param operation The operation to log.
+     */
     void log_operation(const string &operation)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -80,7 +113,14 @@ private:
         logfile.close();
     }
 
-    // Restore a key-value pair from disk
+    /**
+     * @brief Restore a key-value pair from disk.
+     *
+     * This function searches the disk file for the given key and returns the corresponding value if found.
+     *
+     * @param key The key to search for on disk.
+     * @return The value associated with the key, or "NULL" if the key is not found.
+     */
     string restore_from_disk(const string &key)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -104,11 +144,18 @@ private:
     }
 
 public:
-    // Constructor with default capacity and files
+    /**
+     * @brief Constructor for BlinkDB.
+     *
+     * Initializes the key-value store with a specified capacity, disk file, and log file.
+     *
+     * @param cap Maximum number of key-value pairs in memory (default: 3).
+     * @param disk The disk file to store evicted data (default: "blinkdb_disk_part1.txt").
+     * @param log The log file to store operations (default: "blinkdb_log_part1.txt").
+     */
     BlinkDB(size_t cap = 3, const string &disk = "blinkdb_disk_part1.txt", const string &log = "blinkdb_log_part1.txt")
         : capacity(cap), disk_file(disk), log_file(log)
     {
-
         // Delete existing files if they exist (original check kept unchanged)
         if (disk_file.c_str() == 0)
         {
@@ -121,7 +168,15 @@ public:
         log_operation("BlinkDB started with capacity: " + to_string(capacity));
     }
 
-    // Set a key-value pair
+    /**
+     * @brief Set a key-value pair in the database.
+     *
+     * This function adds a key-value pair to the in-memory store and evicts the least recently used item
+     * if the capacity is exceeded.
+     *
+     * @param key The key to set.
+     * @param value The value to associate with the key.
+     */
     void set(const char *key, const char *value)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -138,7 +193,15 @@ public:
         log_operation(log_entry);
     }
 
-    // Get the value for a key
+    /**
+     * @brief Get the value for a key from the database.
+     *
+     * This function retrieves the value associated with the specified key. If the key is not found
+     * in memory, it attempts to restore it from disk.
+     *
+     * @param key The key to retrieve the value for.
+     * @return The value associated with the key, or "NULL" if the key does not exist.
+     */
     string get(const char *key)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -173,7 +236,13 @@ public:
         }
     }
 
-    // Delete a key-value pair
+    /**
+     * @brief Delete a key-value pair from the database.
+     *
+     * This function removes a key-value pair from both the in-memory store and the LRU list.
+     *
+     * @param key The key to delete.
+     */
     void del(const char *key)
     {
         std::lock_guard<std::recursive_mutex> lock(mtx);
@@ -199,7 +268,14 @@ public:
     }
 };
 
-// REPL for Local Interaction
+/**
+ * @brief Run a Read-Eval-Print Loop (REPL) for interacting with the BlinkDB.
+ *
+ * This function continuously accepts user commands, processes them, and performs corresponding operations
+ * on the BlinkDB instance.
+ *
+ * @param db The BlinkDB instance to interact with.
+ */
 void run_repl(BlinkDB &db)
 {
     string input;
@@ -236,6 +312,16 @@ void run_repl(BlinkDB &db)
     }
 }
 
+/**
+ * @brief Main function to run the BlinkDB with REPL.
+ *
+ * This function parses the command line arguments to determine the mode (default is REPL mode).
+ * It creates a BlinkDB instance and runs the REPL in a separate thread.
+ *
+ * @param argc The number of command line arguments.
+ * @param argv The command line arguments.
+ * @return 0 on successful execution.
+ */
 int main(int argc, char *argv[])
 {
     if (argc > 1 && string(argv[1]) == "part1")
