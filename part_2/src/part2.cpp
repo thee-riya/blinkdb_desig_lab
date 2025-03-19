@@ -1,3 +1,22 @@
+/**
+ * @file blinkdb_server.cpp
+ * @brief BlinkDB Server: A high concurrency key-value store using epoll and thread pool.
+ *
+ * This file implements a simple in-memory key-value store server that uses a protocol similar to RESP-2,
+ * along with a thread pool and epoll for handling multiple client connections concurrently.
+ * The server supports basic commands (SET, GET, DEL, CONFIG GET, COMMAND DOCS) and logs operations.
+ *
+ * Features:
+ * - In-memory Storage Engine with thread safety.
+ * - RESP-2 Encoder/Decoder for communication.
+ * - A simple thread pool for concurrent request processing.
+ * - Non-blocking I/O with epoll for high concurrency.
+ * - Logging to both a file and console.
+ *
+ * @author
+ * @date 2025-03-19
+ */
+
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -19,23 +38,47 @@ using namespace std;
 //------------------------------
 // Storage Engine (Part 1)
 //------------------------------
+
+/**
+ * @class StorageEngine
+ * @brief A simple thread-safe in-memory key-value store.
+ *
+ * This class implements an in-memory database using an unordered_map with mutex protection
+ * for concurrent access.
+ */
 class StorageEngine
 {
 private:
-    unordered_map<string, string> db;
-    mutex db_mutex;
+    unordered_map<string, string> db; ///< Internal storage mapping keys to values.
+    mutex db_mutex;                   ///< Mutex to ensure thread-safe operations.
 
 public:
+    /**
+     * @brief Sets a key-value pair in the storage.
+     * @param key The key to set.
+     * @param value The value to associate with the key.
+     */
     void set(const string &key, const string &value)
     {
         lock_guard<mutex> lock(db_mutex);
         db[key] = value;
     }
+
+    /**
+     * @brief Retrieves the value for a given key.
+     * @param key The key to retrieve.
+     * @return The associated value if present; otherwise returns "null".
+     */
     string get(const string &key)
     {
         lock_guard<mutex> lock(db_mutex);
         return db.count(key) ? db[key] : "null";
     }
+
+    /**
+     * @brief Deletes a key from the storage.
+     * @param key The key to delete.
+     */
     void del(const string &key)
     {
         lock_guard<mutex> lock(db_mutex);
@@ -46,12 +89,31 @@ public:
 //------------------------------
 // RESP-2 Encoder/Decoder
 //------------------------------
+
+/**
+ * @namespace RESP
+ * @brief Provides functions to encode various data types into RESP-2 format.
+ */
 namespace RESP
 {
+    /**
+     * @brief Encodes a simple string in RESP-2 format.
+     * @param str The string to encode.
+     * @return The encoded RESP simple string.
+     */
     string encodeSimpleString(const string &str)
     {
         return "+" + str + "\r\n";
     }
+
+    /**
+     * @brief Encodes a bulk string in RESP-2 format.
+     *
+     * If the string is "null", it returns the RESP-2 null bulk string.
+     *
+     * @param str The string to encode.
+     * @return The encoded RESP bulk string.
+     */
     string encodeBulkString(const string &str)
     {
         if (str == "null")
@@ -60,10 +122,22 @@ namespace RESP
         }
         return "$" + to_string(str.size()) + "\r\n" + str + "\r\n";
     }
+
+    /**
+     * @brief Encodes an error message in RESP-2 format.
+     * @param err The error message.
+     * @return The encoded RESP error message.
+     */
     string encodeError(const string &err)
     {
         return "-" + err + "\r\n";
     }
+
+    /**
+     * @brief Encodes an integer in RESP-2 format.
+     * @param value The integer value.
+     * @return The encoded RESP integer.
+     */
     string encodeInteger(int value)
     {
         return ":" + to_string(value) + "\r\n";
@@ -73,10 +147,19 @@ namespace RESP
 //------------------------------
 // RESP-2 Command Parser
 //------------------------------
-// Attempts to parse one complete RESP command (an array) from the buffer.
-// If successful, 'tokens' is filled with the command arguments and 'consumed'
-// is set to the number of bytes used from the buffer.
-// Returns true if a complete command was parsed; otherwise false.
+
+/**
+ * @brief Attempts to parse a complete RESP command from a buffer.
+ *
+ * This function parses an array-style RESP command from the provided buffer.
+ * If a complete command is found, the tokens are populated and the number of bytes
+ * consumed is returned in the 'consumed' parameter.
+ *
+ * @param buffer The input buffer containing the RESP command.
+ * @param tokens Output vector that will contain the parsed command tokens.
+ * @param consumed Output parameter indicating the number of bytes consumed from the buffer.
+ * @return true if a complete command was parsed; otherwise false.
+ */
 bool tryParseCommand(const string &buffer, vector<string> &tokens, size_t &consumed)
 {
     tokens.clear();
@@ -130,16 +213,28 @@ bool tryParseCommand(const string &buffer, vector<string> &tokens, size_t &consu
 //------------------------------
 // Simple Thread Pool
 //------------------------------
+
+/**
+ * @class ThreadPool
+ * @brief A simple thread pool for executing tasks concurrently.
+ *
+ * This class creates a pool of worker threads that process tasks from a task queue.
+ * Tasks are submitted using the enqueue() method.
+ */
 class ThreadPool
 {
 private:
-    vector<thread> workers;
-    queue<function<void()>> tasks;
-    mutex queue_mutex;
-    condition_variable condition;
-    bool stop;
+    vector<thread> workers;        ///< Vector of worker threads.
+    queue<function<void()>> tasks; ///< Queue holding tasks to be executed.
+    mutex queue_mutex;             ///< Mutex to protect access to the task queue.
+    condition_variable condition;  ///< Condition variable for task notifications.
+    bool stop;                     ///< Flag to signal stopping of the thread pool.
 
 public:
+    /**
+     * @brief Constructs a ThreadPool with a specified number of threads.
+     * @param threads The number of threads to create in the pool.
+     */
     ThreadPool(size_t threads) : stop(false)
     {
         for (size_t i = 0; i < threads; ++i)
@@ -164,6 +259,11 @@ public:
                 });
         }
     }
+
+    /**
+     * @brief Adds a new task to the thread pool.
+     * @param task A callable to be executed by one of the worker threads.
+     */
     void enqueue(function<void()> task)
     {
         {
@@ -172,6 +272,10 @@ public:
         }
         condition.notify_one();
     }
+
+    /**
+     * @brief Destructor. Stops the thread pool and joins all worker threads.
+     */
     ~ThreadPool()
     {
         {
@@ -187,29 +291,46 @@ public:
 //------------------------------
 // BlinkDB Server with Epoll and Thread Pool
 //------------------------------
+
+/**
+ * @class BlinkDBServer
+ * @brief A high concurrency key-value store server using epoll and a thread pool.
+ *
+ * This class sets up a TCP server that listens for incoming connections and processes
+ * RESP-2 formatted commands using a non-blocking socket and the epoll event mechanism.
+ * It utilizes a thread pool to handle client requests concurrently.
+ */
 class BlinkDBServer
 {
 private:
-    int port;
-    int server_fd;
-    StorageEngine storage;
-    mutex log_mutex;
-    ofstream log_file; // Log file stream
-    ThreadPool threadPool;
-    // Map for persisting partial command buffers per client fd.
-    unordered_map<int, string> connectionBuffers;
-    mutex connectionBuffersMutex;
+    int port;              ///< Port number on which the server listens.
+    int server_fd;         ///< Server socket file descriptor.
+    StorageEngine storage; ///< In-memory storage engine.
+    mutex log_mutex;       ///< Mutex for protecting log operations.
+    ofstream log_file;     ///< Log file stream.
+    ThreadPool threadPool; ///< Thread pool for handling client requests.
 
-    // Logging helper: logs to both console and file.
+    // Map for persisting partial command buffers per client file descriptor.
+    unordered_map<int, string> connectionBuffers;
+    mutex connectionBuffersMutex; ///< Mutex for protecting the connection buffer map.
+
+    /**
+     * @brief Logs a message to the log file (and optionally console).
+     * @param message The message to log.
+     */
     void log(const string &message)
     {
         lock_guard<mutex> lock(log_mutex);
         if (log_file.is_open())
             log_file << "[LOG] " << message << endl;
+        // Uncomment below to also log to console.
         // cout << "[LOG] " << message << endl;
     }
 
-    // Set file descriptor to non-blocking mode
+    /**
+     * @brief Sets a file descriptor to non-blocking mode.
+     * @param fd The file descriptor to set.
+     */
     void setNonBlocking(int fd)
     {
         int flags = fcntl(fd, F_GETFL, 0);
@@ -225,7 +346,14 @@ private:
         }
     }
 
-    // Process a single client fd. This function is enqueued on the thread pool.
+    /**
+     * @brief Handles communication with a single client.
+     *
+     * This function reads data from the client, processes complete RESP commands,
+     * and sends back appropriate responses. Partial commands are stored for later processing.
+     *
+     * @param client_fd The file descriptor for the client socket.
+     */
     void handleClient(int client_fd)
     {
         string localBuffer;
@@ -342,7 +470,11 @@ private:
     }
 
 public:
-    // The constructor accepts the port and a thread pool size.
+    /**
+     * @brief Constructs a BlinkDBServer.
+     * @param port The port number on which the server will listen.
+     * @param threadPoolSize The number of threads in the thread pool.
+     */
     BlinkDBServer(int port, size_t threadPoolSize)
         : port(port), server_fd(-1), threadPool(threadPoolSize)
     {
@@ -352,13 +484,22 @@ public:
             cerr << "Failed to open log file. Logging to console only." << endl;
         }
     }
+
+    /**
+     * @brief Destructor. Closes the log file if open.
+     */
     ~BlinkDBServer()
     {
         if (log_file.is_open())
             log_file.close();
     }
 
-    // Start the TCP server.
+    /**
+     * @brief Starts the TCP server.
+     *
+     * This function sets up the server socket, binds to the specified port, listens for incoming connections,
+     * and uses epoll to handle multiple client connections concurrently.
+     */
     void start()
     {
         // Create server socket
@@ -484,6 +625,15 @@ public:
 //------------------------------
 // Main Entry Point
 //------------------------------
+
+/**
+ * @brief The main entry point for BlinkDBServer.
+ *
+ * The main function determines an appropriate thread pool size based on hardware concurrency,
+ * creates an instance of BlinkDBServer, and starts the server on port 9001.
+ *
+ * @return int Exit status.
+ */
 int main()
 {
     // Determine an appropriate thread pool size based on hardware concurrency.
