@@ -6,6 +6,8 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <vector>
+#include <cstdio>
 using namespace std;
 
 /**
@@ -26,7 +28,7 @@ private:
     size_t capacity;                                       ///< Maximum number of key-value pairs in memory
     string disk_file;                                      ///< File to store flushed data
     string log_file;                                       ///< File to store all operations
-    std::recursive_mutex mtx;                              ///< Mutex to protect shared resources
+    recursive_mutex mtx;                                   ///< Mutex to protect shared resources
 
     /**
      * @brief Evict the least recently used key if capacity is reached.
@@ -36,7 +38,7 @@ private:
      */
     void evict()
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         if (data.size() >= capacity)
         {
             string lru_key = lru_list.back();
@@ -62,7 +64,7 @@ private:
      */
     void update_lru(const string &key)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         if (lru_map.find(key) != lru_map.end())
         {
             lru_list.erase(lru_map[key]);
@@ -81,7 +83,7 @@ private:
      */
     void flush_to_disk(const string &key, const string &value)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         ofstream outfile(disk_file, ios::app);
         if (!outfile.is_open())
         {
@@ -94,6 +96,51 @@ private:
     }
 
     /**
+     * @brief Remove a key-value pair from the disk file.
+     *
+     * This function reads the disk file, removes any entry with the specified key,
+     * and rewrites the file.
+     *
+     * @param key The key to remove from the disk.
+     */
+    void remove_from_disk(const string &key)
+    {
+        lock_guard<recursive_mutex> lock(mtx);
+        ifstream infile(disk_file);
+        if (!infile.is_open())
+        {
+            cerr << "Error: Unable to open disk file for reading: " << disk_file << endl;
+            return;
+        }
+        vector<string> lines;
+        string line;
+        while (getline(infile, line))
+        {
+            istringstream iss(line);
+            string k, v;
+            iss >> k >> v;
+            if (k != key)
+            {
+                lines.push_back(line);
+            }
+        }
+        infile.close();
+
+        ofstream outfile(disk_file, ios::trunc);
+        if (!outfile.is_open())
+        {
+            cerr << "Error: Unable to open disk file for writing: " << disk_file << endl;
+            return;
+        }
+        for (const auto &l : lines)
+        {
+            outfile << l << endl;
+        }
+        outfile.close();
+        log_operation("Removed from disk: " + key);
+    }
+
+    /**
      * @brief Log an operation to the log file.
      *
      * This function appends the given operation description to the log file.
@@ -102,7 +149,7 @@ private:
      */
     void log_operation(const string &operation)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         ofstream logfile(log_file, ios::app);
         if (!logfile.is_open())
         {
@@ -116,30 +163,37 @@ private:
     /**
      * @brief Restore a key-value pair from disk.
      *
-     * This function searches the disk file for the given key and returns the corresponding value if found.
+     * This function searches the disk file for the given key, removes it from disk if found, and returns the corresponding value.
      *
      * @param key The key to search for on disk.
      * @return The value associated with the key, or "NULL" if the key is not found.
      */
     string restore_from_disk(const string &key)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         ifstream infile(disk_file);
         if (!infile.is_open())
         {
             return "NULL"; // Disk file not accessible
         }
         string k, v;
+        bool found = false;
         while (infile >> k >> v)
         {
             if (k == key)
             {
-                infile.close();
-                log_operation("Restored from disk: " + k + " -> " + v);
-                return v;
+                found = true;
+                break;
             }
         }
         infile.close();
+        if (found)
+        {
+            log_operation("Restored from disk: " + key + " -> " + v);
+            // Remove the restored key from disk.
+            remove_from_disk(key);
+            return v;
+        }
         return "NULL"; // Key not found on disk
     }
 
@@ -156,15 +210,9 @@ public:
     BlinkDB(size_t cap = 3, const string &disk = "blinkdb_disk_part1.txt", const string &log = "blinkdb_log_part1.txt")
         : capacity(cap), disk_file(disk), log_file(log)
     {
-        // Delete existing files if they exist (original check kept unchanged)
-        if (disk_file.c_str() == 0)
-        {
-            remove(disk_file.c_str());
-        }
-        if (log_file.c_str() == 0)
-        {
-            remove(log_file.c_str());
-        }
+        // Remove existing files if they exist.
+        remove(disk_file.c_str());
+        remove(log_file.c_str());
         log_operation("BlinkDB started with capacity: " + to_string(capacity));
     }
 
@@ -179,7 +227,7 @@ public:
      */
     void set(const char *key, const char *value)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         if (!key || !value)
         {
             cerr << "Error: Key or value is null!" << endl;
@@ -189,8 +237,7 @@ public:
         evict(); // Evict if capacity is reached
         data[k] = v;
         update_lru(k);
-        string log_entry = "Set: " + k + " -> " + v;
-        log_operation(log_entry);
+        log_operation("Set: " + k + " -> " + v);
     }
 
     /**
@@ -204,7 +251,7 @@ public:
      */
     string get(const char *key)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         if (!key)
         {
             cerr << "Error: Key is null!" << endl;
@@ -220,18 +267,18 @@ public:
         }
         else
         {
-            // Key not in memory, try restoring from disk
+            // Key not in memory, try restoring from disk.
             string value = restore_from_disk(k);
             if (value != "NULL")
             {
-                // Restore the key-value pair to memory
+                // Restore the key-value pair to memory.
                 set(k.c_str(), value.c_str());
                 return value;
             }
             else
             {
                 log_operation("Get: " + k + " -> NULL");
-                return "NULL"; // Key not found on disk
+                return "NULL"; // Key not found on disk.
             }
         }
     }
@@ -239,13 +286,14 @@ public:
     /**
      * @brief Delete a key-value pair from the database.
      *
-     * This function removes a key-value pair from both the in-memory store and the LRU list.
+     * This function removes a key-value pair from both the in-memory store and the LRU list,
+     * and deletes the corresponding entry from disk.
      *
      * @param key The key to delete.
      */
     void del(const char *key)
     {
-        std::lock_guard<std::recursive_mutex> lock(mtx);
+        lock_guard<recursive_mutex> lock(mtx);
         if (!key)
         {
             cerr << "Error: Key is null!" << endl;
@@ -257,13 +305,23 @@ public:
             data.erase(k);
             lru_list.erase(lru_map[k]);
             lru_map.erase(k);
-            string log_entry = "Deleted: " + k;
-            log_operation(log_entry);
+            log_operation("Deleted: " + k);
+            // Remove from disk as well.
+            remove_from_disk(k);
         }
         else
         {
-            cout << "Does not exist." << endl;
-            log_operation("Delete failed: " + k + " does not exist.");
+            // Key not in memory; try to restore from disk and delete.
+            string value = restore_from_disk(k);
+            if (value != "NULL")
+            {
+                log_operation("Deleted: " + k + " (restored from disk)");
+            }
+            else
+            {
+                cout << "Does not exist." << endl;
+                log_operation("Delete failed: " + k + " does not exist.");
+            }
         }
     }
 };
@@ -282,11 +340,11 @@ void run_repl(BlinkDB &db)
     while (true)
     {
         cout << "User> ";
-        cout.flush(); // Ensure prompt is printed
+        cout.flush();
         getline(cin, input);
         if (input.empty())
         {
-            continue; // Skip empty input
+            continue;
         }
         istringstream iss(input);
         string command, key, value;
@@ -315,8 +373,7 @@ void run_repl(BlinkDB &db)
 /**
  * @brief Main function to run the BlinkDB with REPL.
  *
- * This function parses the command line arguments to determine the mode (default is REPL mode).
- * It creates a BlinkDB instance and runs the REPL in a separate thread.
+ * Creates a BlinkDB instance and runs the REPL in a separate thread.
  *
  * @param argc The number of command line arguments.
  * @param argv The command line arguments.
@@ -326,9 +383,8 @@ int main(int argc, char *argv[])
 {
     if (argc > 1 && string(argv[1]) == "part1")
     {
-        BlinkDB db; // Default capacity and disk/log files
-        // Run the REPL in a separate thread to demonstrate multithreading.
-        thread repl_thread(run_repl, std::ref(db));
+        BlinkDB db; // Use default capacity and disk/log file names.
+        thread repl_thread(run_repl, ref(db));
         repl_thread.join();
     }
     else
