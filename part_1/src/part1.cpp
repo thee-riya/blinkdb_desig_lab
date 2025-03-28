@@ -381,15 +381,8 @@ void run_repl(BlinkDB &db)
  */
 int main(int argc, char *argv[])
 {
-    if (argc > 1 && string(argv[1]) == "part1")
-    {
-        BlinkDB db; // Use default capacity and disk/log file names.
-        thread repl_thread(run_repl, ref(db));
-        repl_thread.join();
-    }
-    else
-    {
-        cout << "No valid mode specified. Run with 'part1' argument for REPL mode." << endl;
-    }
+    BlinkDB db; // Use default capacity and disk/log file names.
+    thread repl_thread(run_repl, ref(db));
+    repl_thread.join();
     return 0;
 }
