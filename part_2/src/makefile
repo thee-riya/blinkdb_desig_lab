@@ -9,21 +9,16 @@ CXXFLAGS := -std=c++11 -pthread -Wall -O2
 TARGET := part2
 SRC := part2.cpp
 
-# Default target: Build the executable, generate documentation, and run benchmark tests.
-all: $(TARGET)
-	@echo "Generating documentation..."
-	@doxygen DoxyFile
-	# @echo "Compiling PDF documentation..."
-	# @cd ../docs/latex && make
-	@echo "Running benchmark tests..."
-	@$(MAKE) benchmark
+# Default target: Build the executable and run benchmark tests.
+all: $(TARGET) benchmark
 
 $(TARGET): $(SRC)
 	@$(CXX) $(CXXFLAGS) $(SRC) -o $(TARGET)
 
-# Run the server silently
+# Run the server interactively (terminal output visible)
 run: $(TARGET)
-	@./$(TARGET) >/dev/null 2>&1
+	@echo "Starting server on port 9001..."
+	@./$(TARGET)
 
 # Benchmark target:
 #   - Creates a "result" folder.
@@ -48,7 +43,7 @@ benchmark: $(TARGET)
 	done; \
 	echo "Killing server with PID $$SERVER_PID"; \
 	kill $$SERVER_PID >/dev/null 2>&1; \
-	echo "all reports generated"
+	echo "All benchmark reports generated."
 
 # Clean up build artifacts and generated documentation/benchmark reports.
 clean:
