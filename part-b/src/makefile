@@ -9,21 +9,30 @@ CXXFLAGS := -std=c++11 -pthread -Wall -O2
 TARGET := part2
 SRC := part2.cpp
 
-# Default target: Build the executable and run benchmark tests.
-all: $(TARGET) benchmark
+# Default target: Build the executable.
+all: $(TARGET)
 
 $(TARGET): $(SRC)
 	@$(CXX) $(CXXFLAGS) $(SRC) -o $(TARGET)
 
-# Run the server interactively (terminal output visible)
+# Documentation target: Generate documentation using Doxygen and compile PDF report.
+doc:
+	@echo "Generating documentation..."
+	@doxygen DoxyFile
+	@echo "Compiling PDF documentation..."
+	@$(MAKE) -C ../docs/latex
+	@echo "Renaming refman.pdf to report.pdf..."
+	@mv ../docs/latex/refman.pdf ../docs/latex/report.pdf
+
+# Run target: Run the server interactively (terminal output visible).
 run: $(TARGET)
 	@echo "Starting server on port 9001..."
 	@./$(TARGET)
 
 # Benchmark target:
 #   - Creates a "result" folder.
-#   - Starts the server in the background, runs benchmarks for all configurations,
-#     storing each output in the "result" folder.
+#   - Starts the server in the background.
+#   - Runs benchmarks for all configurations, storing each output in the "result" folder.
 #   - Finally, kills the server and prints a final message.
 benchmark: $(TARGET)
 	@echo "Starting server in background..."
@@ -48,6 +57,6 @@ benchmark: $(TARGET)
 # Clean up build artifacts and generated documentation/benchmark reports.
 clean:
 	@rm -f $(TARGET) *.o
-	@rm -rf ../result ../docs/html docs/latex
+	@rm -rf ../result ../docs/html ../docs/latex
 
-.PHONY: all run benchmark clean
+.PHONY: all doc run benchmark clean
